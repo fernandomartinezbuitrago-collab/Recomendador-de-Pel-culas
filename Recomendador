@@ -1,0 +1,420 @@
+# This Python 3 environment comes with many helpful analytics libraries installed
+# It is defined by the kaggle/python Docker image: https://github.com/kaggle/docker-python
+# For example, here's several helpful packages to load
+
+import numpy as np # linear algebra
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+
+# Input data files are available in the read-only "../input/" directory
+# For example, running this (by clicking run or pressing Shift+Enter) will list all files under the input directory
+
+import os
+for dirname, _, filenames in os.walk('/kaggle/input'):
+    for filename in filenames:
+        print(os.path.join(dirname, filename))
+
+# You can write up to 20GB to the current directory (/kaggle/working/) that gets preserved as output when you create a version using "Save & Run All" 
+# You can also write temporary files to /kaggle/temp/, but they won't be saved outside of the current session
+
+
+
+
+
+# ==============================================================================
+# SANDBOX DE CIENCIA DE DATOS - VERSIÓN 1.6 (RECOMMENDER READY)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. IMPORTACIONES Y CONFIGURACIÓN
+# ------------------------------------------------------------------------------
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Configuración visual pro
+pd.set_option('display.max_columns', None)
+plt.style.use('ggplot')
+sns.set_palette("husl")
+
+# ------------------------------------------------------------------------------
+# 2. HERRAMIENTAS DE GESTIÓN Y PREPARACIÓN (DATA MANAGEMENT)
+# ------------------------------------------------------------------------------
+
+def cargar_datos(ruta):
+    """Carga CSV o Excel detectando el formato automáticamente."""
+    try:
+        if ruta.endswith('.csv'):
+            df = pd.read_csv(ruta)
+        elif ruta.endswith('.xlsx'):
+            df = pd.read_excel(ruta)
+        else:
+            print("❌ Formato no soportado. Usa CSV o Excel.")
+            return None
+            
+        print(f"✅ Datos cargados con éxito: {df.shape[0]} filas, {df.shape[1]} columnas.")
+        return df
+    except FileNotFoundError:
+        print("❌ Error: El archivo no existe.")
+        return None
+
+def auditoria_rapida(df):
+    """Informe ejecutivo de los datos."""
+    print("\n--- 1. VISTA PREVIA (Head) ---")
+    display(df.head(3))
+    
+    print("\n--- 2. INFORMACIÓN TÉCNICA ---")
+    print(df.info())
+    
+    print("\n--- 3. VALORES NULOS (Missing) ---")
+    nulos = df.isnull().sum()
+    print(nulos[nulos > 0])
+    
+    print("\n--- 4. DUPLICADOS ---")
+    print(f"Filas duplicadas: {df.duplicated().sum()}")
+
+def limpiar_basico(df):
+    """Quita duplicados y rellena nulos numéricos con la mediana."""
+    df_clean = df.copy()
+    df_clean = df_clean.drop_duplicates()
+    
+    cols_numericas = df_clean.select_dtypes(include=[np.number]).columns
+    for col in cols_numericas:
+        df_clean[col] = df_clean[col].fillna(df_clean[col].median())
+        
+    print("✅ Limpieza básica terminada (Nulos numéricos rellenados).")
+    return df_clean
+
+def preparar_para_ia(df, columna_objetivo, columnas_a_borrar):
+    """
+    1. Elimina columnas inútiles.
+    2. Convierte texto a números (One-Hot Encoding).
+    3. Separa X (Datos) e y (Objetivo).
+    """
+    # Borrar basura
+    df_ml = df.drop(columnas_a_borrar, axis=1)
+    
+    # Convertir todo el texto a números (Dummies)
+    df_ml = pd.get_dummies(df_ml, drop_first=True)
+    
+    # Separar X e y
+    X = df_ml.drop(columna_objetivo, axis=1)
+    y = df_ml[columna_objetivo]
+    
+    print(f"✅ Datos listos para IA.")
+    print(f"   - X (Variables): {X.shape}")
+    print(f"   - y (Objetivo): {y.shape}")
+    return X, y
+
+# ------------------------------------------------------------------------------
+# 3. HERRAMIENTAS DE INGENIERÍA DE CARACTERÍSTICAS
+# ------------------------------------------------------------------------------
+
+def crear_columna_suma(df, lista_columnas, nombre_nueva_columna):
+    """Crea una columna que es la suma de otras."""
+    df[nombre_nueva_columna] = df[lista_columnas].sum(axis=1)
+    print(f"✅ Columna '{nombre_nueva_columna}' creada sumando: {lista_columnas}")
+    return df
+
+def extraer_texto_regex(df, columna_origen, patron, nombre_nueva_columna):
+    """Extrae texto usando expresiones regulares (Regex)."""
+    df[nombre_nueva_columna] = df[columna_origen].str.extract(patron, expand=False)
+    print(f"✅ Texto extraído de '{columna_origen}' a '{nombre_nueva_columna}'.")
+    return df
+
+def agrupar_categorias(df, columna, diccionario_reemplazo):
+    """Reemplaza valores en una columna usando un diccionario."""
+    df[columna] = df[columna].replace(diccionario_reemplazo)
+    print(f"✅ Valores reemplazados en '{columna}'.")
+    return df
+
+def crear_matriz_utilidad(df, index_col, columns_col, values_col, fill_value=0):
+    """
+    Convierte datos transaccionales en Matrix (Usuario vs Item).
+    Vital para Recomendadores Colaborativos.
+    """
+    print(f"🔄 Transformando tabla a Matriz: {index_col} vs {columns_col}...")
+    matrix = df.pivot_table(index=index_col, columns=columns_col, values=values_col)
+    
+    # Rellenar huecos
+    matrix = matrix.fillna(fill_value)
+    
+    print(f"✅ Matriz creada. Dimensiones: {matrix.shape}")
+    print(f"   - Sparsity (Huecos): {1.0 - (np.count_nonzero(matrix) / float(matrix.size)):.2%}")
+    return matrix
+
+# ------------------------------------------------------------------------------
+# 4. HERRAMIENTAS DE VISUALIZACIÓN
+# ------------------------------------------------------------------------------
+
+def mapa_correlacion(df):
+    """Mapa de calor inteligente."""
+    plt.figure(figsize=(12, 8))
+    df_temp = df.copy()
+    columnas_texto = df_temp.select_dtypes(exclude=[np.number]).columns
+    for col in columnas_texto:
+        df_temp[col] = df_temp[col].astype('category').cat.codes
+    
+    corr = df_temp.corr()
+    sns.heatmap(corr, annot=True, cmap='coolwarm', fmt=".2f")
+    plt.title("Mapa de Correlación (Todo incluido)")
+    plt.show()
+
+def grafico_distribucion(df, columna):
+    """Histograma simple."""
+    plt.figure(figsize=(8, 5))
+    sns.histplot(data=df, x=columna, kde=True)
+    plt.title(f"Distribución de: {columna}")
+    plt.show()
+
+def grafico_categorias(df, columna, objetivo=None):
+    """Barras de conteo."""
+    plt.figure(figsize=(8, 5))
+    if objetivo:
+        sns.countplot(data=df, x=columna, hue=objetivo)
+        plt.title(f"{columna} vs {objetivo}")
+    else:
+        sns.countplot(data=df, x=columna)
+        plt.title(f"Conteo de: {columna}")
+    plt.show()
+
+def grafico_caja(df, columna_num, columna_cat):
+    """Boxplot para outliers."""
+    plt.figure(figsize=(8, 5))
+    sns.boxplot(data=df, x=columna_cat, y=columna_num)
+    plt.title(f"Boxplot: {columna_num} por {columna_cat}")
+    plt.show()
+
+def grafico_densidad_comparativa(df, variable, categoria):
+    """Densidad superpuesta."""
+    plt.figure(figsize=(10, 6))
+    sns.kdeplot(data=df, x=variable, hue=categoria, fill=True)
+    plt.title(f"Densidad de {variable} por {categoria}")
+    plt.show()
+
+def grafico_paneles(df, variable, categoria):
+    """Gráficos separados por columnas."""
+    sns.displot(data=df, x=variable, col=categoria, kde=True, height=4, aspect=1.2)
+    print(f"✅ Paneles generados para {variable} separados por {categoria}")
+
+# ------------------------------------------------------------------------------
+# 5. ZONA DE TRABAJO
+# ------------------------------------------------------------------------------
+print("🤖 SANDBOX v1.6 (RECOMMENDER READY) CARGADO. Caja de herramientas lista.")
+
+
+
+
+
+# --- PASO 1 Y 2: CARGA Y PREPARACIÓN ---
+print(">>> CARGANDO DATOS...")
+# 1. Cargar
+ratings = cargar_datos("/kaggle/input/movielens/ratings.csv") 
+movies = cargar_datos("/kaggle/input/movielens/movies.csv")
+
+# 2. Ingeniería de Características (Extraer Año)
+# Usamos tu herramienta del Sandbox para limpiar el título
+print(">>> PROCESANDO TÍTULOS...")
+movies = extraer_texto_regex(movies, 'title', r'\((\d{4})\)', 'year')
+
+# --- PASO 3: FUSIÓN Y AUDITORÍA ---
+print(">>> CREANDO DATASET MAESTRO...")
+# Unimos las tablas
+df_completo = pd.merge(ratings, movies, on='movieId', how='inner')
+
+# Ahora sí, la auditoría funcionará porque df_completo ya existe
+auditoria_rapida(df_completo)
+
+
+
+
+
+# --- PASO 5: ANÁLISIS DE DISTRIBUCIÓN DE VOTOS ---
+print(">>> 5. ¿CÓMO VOTA LA GENTE? (Psicología del Usuario)")
+# Usamos tu herramienta gráfica del Sandbox
+grafico_distribucion(df_completo, 'rating')
+
+# Interpretación rápida con Pandas
+promedio = df_completo['rating'].mean()
+print(f"Nota media global: {promedio:.2f} / 5.0")
+
+
+# --- PASO 6: EL PROBLEMA DE LA "COLA LARGA" (Long Tail) ---
+# Agrupamos por título para ver cuántos votos tiene cada peli
+# ESTO ES PANDAS PURO: .groupby() es la herramienta más potente para resumir.
+movie_stats = df_completo.groupby('title').agg({'rating': ['count', 'mean']})
+
+# Aplanamos las columnas para que sea fácil de leer
+movie_stats.columns = ['num_votos', 'nota_promedio']
+
+print("\n>>> 6. TOP PELÍCULAS MÁS POPULARES (Por volumen):")
+display(movie_stats.sort_values(by='num_votos', ascending=False).head(10))
+
+# Visualizar la "Cola Larga"
+plt.figure(figsize=(10,6))
+sns.histplot(movie_stats['num_votos'], bins=50, kde=False)
+plt.title("Distribución de Votos por Película (La mayoría tiene pocos votos)")
+plt.xlabel("Número de votos")
+plt.xlim(0, 200) # Hacemos zoom en las pelis con pocos votos
+plt.show()
+
+
+
+
+
+# --- PASO 7: FILTRADO DE DATOS (DATA PREPARATION) ---
+print(">>> 7. LIMPIANDO EL RUIDO (Películas con pocos votos)...")
+
+# Definimos el umbral: Solo queremos películas "consolidadas"
+umbral_votos = 50
+
+# Identificamos los títulos que cumplen la condición
+# (Usamos la tabla 'movie_stats' que creamos en el paso anterior)
+peliculas_populares = movie_stats[movie_stats['num_votos'] >= umbral_votos].index
+
+# Filtramos el dataset original
+# "Quédate solo con las filas cuyo título esté en la lista de populares"
+df_final = df_completo[df_completo['title'].isin(peliculas_populares)]
+
+print(f"Registros originales: {df_completo.shape[0]}")
+print(f"Registros tras filtrado: {df_final.shape[0]}")
+print(f"Hemos eliminado {df_completo.shape[0] - df_final.shape[0]} valoraciones de películas oscuras.")
+
+
+# --- PASO 8: CREACIÓN DE LA MATRIZ DE UTILIDAD ---
+print("\n>>> 8. TRANSFORMANDO A MATRIZ PARA LA IA...")
+
+# Usamos tu herramienta NUEVA del Sandbox v1.6
+matriz_peliculas = crear_matriz_utilidad(
+    df=df_final, 
+    index_col='userId',   # Filas = Usuarios
+    columns_col='title',  # Columnas = Películas
+    values_col='rating'   # Valor = Nota
+)
+
+# Vistazo a la matriz
+display(matriz_peliculas.head())
+
+
+
+
+
+from scipy.sparse import csr_matrix
+from sklearn.neighbors import NearestNeighbors
+
+# --- RECUPERACIÓN: PASOS 9 y 10 (Preparar y Entrenar) ---
+print(">>> RE-GENERANDO MODELO...")
+
+# 1. Transponer la matriz (Filas = Películas) -> AQUÍ SE DEFINE LA VARIABLE QUE FALTABA
+matriz_modelo = matriz_peliculas.T 
+
+# 2. Comprimir datos
+matriz_sparse = csr_matrix(matriz_modelo.values)
+
+# 3. Entrenar IA
+modelo_knn = NearestNeighbors(metric='cosine', algorithm='brute')
+modelo_knn.fit(matriz_sparse)
+print("✅ Modelo entrenado y variable 'matriz_modelo' lista.")
+
+
+# --- PASO 11: FUNCIÓN DE RECOMENDACIÓN ---
+def recomendar_peliculas(nombre_pelicula, n_recomendaciones=5):
+    # Buscar título
+    coincidencias = matriz_modelo.index[matriz_modelo.index.str.contains(nombre_pelicula, case=False, regex=False)]
+    
+    if len(coincidencias) == 0:
+        print(f"❌ No encontré '{nombre_pelicula}' (o tiene menos de 50 votos).")
+        return
+    
+    titulo_exacto = coincidencias[0]
+    print(f"🎬 Película base: {titulo_exacto}")
+    
+    # Preguntar al Modelo
+    indice_fila = matriz_modelo.index.get_loc(titulo_exacto)
+    vector_pelicula = matriz_modelo.iloc[indice_fila, :].values.reshape(1, -1)
+    distancias, indices = modelo_knn.kneighbors(vector_pelicula, n_neighbors=n_recomendaciones+1)
+    
+    # Mostrar resultados
+    print("\n💡 SI TE GUSTÓ ESA, MIRA ESTAS:")
+    for i in range(1, len(distancias.flatten())):
+        vecina = matriz_modelo.index[indices.flatten()[i]]
+        distancia = distancias.flatten()[i]
+        print(f"{i}. {vecina} (Similitud: {1-distancia:.2%})")
+
+# --- PRUEBA DE FUEGO ---
+recomendar_peliculas('Matrix')
+
+
+
+
+
+from sklearn.metrics.pairwise import cosine_similarity
+
+# --- PASO 1: PREPARACIÓN DE DATOS (Ingeniería de Géneros) ---
+print(">>> 1. ANALIZANDO EL ADN DE LAS PELÍCULAS (GÉNEROS)...")
+
+# Recargamos movies para asegurarnos de tener todos los títulos (incluso los que filtramos antes)
+# Ojo: Si quieres usar solo las >50 votos, usa 'df_final' en lugar de 'movies'
+movies_content = movies.copy()
+
+# Las pelis vienen como "Action|Adventure|Sci-Fi". Vamos a separarlas.
+# Esta función mágica convierte los textos en una tabla de 1 y 0
+matriz_generos = movies_content['genres'].str.get_dummies(sep='|')
+
+print(f"✅ Matriz de Contenido creada.")
+print(f"   - Tenemos {matriz_generos.shape[0]} películas.")
+print(f"   - Hemos detectado {matriz_generos.shape[1]} géneros distintos.")
+display(matriz_generos.head(3))
+
+
+# --- PASO 2: CALCULAR SIMILITUD (Matemáticas) ---
+print("\n>>> 2. CALCULANDO PARECIDOS MATEMÁTICOS...")
+
+# Calculamos la similitud del Coseno entre los géneros de todas las películas
+# Esto crea una tabla gigante de "Peli vs Peli" basada solo en su temática
+similitud_generos = cosine_similarity(matriz_generos)
+
+print("✅ Mapa de similitudes calculado.")
+
+
+# --- PASO 3: EL MOTOR DE RECOMENDACIÓN (La Función) ---
+def recomendar_por_contenido(titulo_pelicula, n_recomendaciones=5):
+    # 1. Buscar la película (igual que antes)
+    # Usamos try/except por si el título no existe
+    try:
+        # Buscamos el índice (la fila) donde está esa peli
+        idx = movies_content[movies_content['title'].str.contains(titulo_pelicula, case=False)].index[0]
+        titulo_real = movies_content.loc[idx, 'title']
+        generos_real = movies_content.loc[idx, 'genres']
+        
+        print(f"🎬 Película base: {titulo_real}")
+        print(f"   (Géneros: {generos_real})")
+        print("\n💡 PORQUE TE GUSTA EL GÉNERO, TE RECOMIENDO:")
+        
+    except IndexError:
+        print(f"❌ No encontré ninguna película llamada '{titulo_pelicula}'.")
+        return
+
+    # 2. Buscar las más parecidas en nuestra matriz de similitud
+    # Obtenemos las puntuaciones de todas las pelis contra la nuestra
+    scores = list(enumerate(similitud_generos[idx]))
+    
+    # 3. Las ordenamos de mayor a menor similitud
+    scores_ordenados = sorted(scores, key=lambda x: x[1], reverse=True)
+    
+    # 4. Imprimimos las Top N (saltamos la 0 porque es ella misma)
+    for i in range(1, n_recomendaciones + 1):
+        indice_vecina = scores_ordenados[i][0]
+        score = scores_ordenados[i][1]
+        
+        titulo_vecina = movies_content.loc[indice_vecina, 'title']
+        genero_vecina = movies_content.loc[indice_vecina, 'genres']
+        
+        # Solo mostramos si tiene algo de sentido (similitud > 0)
+        if score > 0:
+            print(f"{i}. {titulo_vecina}")
+            print(f"   -> Similitud: {score:.2%} ({genero_vecina})")
+
+# --- PRUEBA DE FUEGO ---
+# Probamos con la misma peli que en el KNN para comparar resultados
+recomendar_por_contenido('Matrix')
